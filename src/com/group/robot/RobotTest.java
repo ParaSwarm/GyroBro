@@ -3,14 +3,21 @@ package com.group.robot;
 import java.io.IOException;
 import java.rmi.RemoteException;
 import java.rmi.RemoteException;
+import lejos.hardware.motor.UnregulatedMotor;
+import lejos.robotics.EncoderMotor;
 import lejos.robotics.SampleProvider;
+
+import lejos.robotics.filter.MeanFilter;
 import lejos.hardware.BrickFinder;
 import lejos.hardware.BrickInfo;
 import lejos.hardware.Sound;
+import lejos.hardware.ev3.LocalEV3;
 import lejos.hardware.lcd.GraphicsLCD;
 import lejos.hardware.motor.Motor;
+import lejos.hardware.port.MotorPort;
 import lejos.hardware.port.Port;
 import lejos.hardware.sensor.EV3GyroSensor;
+import lejos.hardware.sensor.SensorModes;
 import lejos.remote.ev3.RMIRegulatedMotor;
 import lejos.remote.ev3.RMISampleProvider;
 import lejos.remote.ev3.RemoteEV3;
@@ -18,51 +25,37 @@ import lejos.utility.Delay;
 
 public class RobotTest {
 
-	RemoteEV3 ev3 = null;
-	RMIRegulatedMotor motorA = null;
-	RMIRegulatedMotor motorB = null;
-	//RMIRegulatedMotor motorC = null;
-	//RMIRegulatedMotor motorD = null;
-	RMISampleProvider angleProvider = null;
-	RMISampleProvider rateProvider = null;
-	RMISampleProvider rateAngleProvider = null;
-	private float angle;
-	private float rate;
+	Port port;
+	SensorModes sensor;
+	SampleProvider anglePayload;
+	float[] sample;
+	
 	private int angleInt;
 	private int reactionAngle;
-
+	private EncoderMotor emMotorA;
+	private EncoderMotor emMotorB;
+	private float angle;
+	private int angleAbs;
 	public RobotTest() {
 		setup();
 	}
 
 	private void setup() {
 		try {
-			BrickInfo[] bricks = BrickFinder.discover();
+				emMotorA = new UnregulatedMotor(MotorPort.A);
+				emMotorB = new UnregulatedMotor(MotorPort.B);
 
-			//0 if not connected via bluetooth
-			if(bricks.length > 0){
-				for (BrickInfo info : bricks) {
-					System.out.println("Ev3 found on Bluetooth ip: " + info.getIPAddress());
-				}
-				
-				String connectedBrick = bricks[0].getIPAddress();
-				ev3 = new RemoteEV3(connectedBrick);
-				
-				ev3.setDefault();
-				GraphicsLCD display = ev3.getGraphicsLCD();
-				display.clear();
-				Sound.beep();
-
-				
-				motorA = ev3.createRegulatedMotor("A", 'L');
-				motorB = ev3.createRegulatedMotor("B", 'L');
-
+				// get a port instance
+				port = LocalEV3.get().getPort("S1");
+				// Get an instance of the Ultrasonic EV3 sensor
+				sensor = new EV3GyroSensor(port);
+				// get an instance of this sensor in measurement mode
+				anglePayload = sensor.getMode("Angle");
+				// initialise an array of floats for fetching samples
+				sample = new float[anglePayload.sampleSize()];
 
 				Sound.beep();
-			}else{
-				System.out.println("no brick found on bluetooth");
-				throw new Exception("NO BRICK FOUND ON BLUETOOTH");
-			}
+
 
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -74,78 +67,52 @@ public class RobotTest {
 	 * @return
 	 * @throws RemoteException
 	 */
-	public boolean sensorScan() throws RemoteException {
-
+	public boolean sensorScan() {
 		try {
-
-			//angleProvider = ev3.createSampleProvider("S1", "lejos.hardware.sensor.EV3GyroSensor","Angle");
-			//rateProvider = ev3.createSampleProvider("S1", "lejos.hardware.sensor.EV3GyroSensor","Rate");
-			rateAngleProvider = ev3.createSampleProvider("S1", "lejos.hardware.sensor.EV3GyroSensor","Angle and Rate");
-
-			//motorA.forward();
-			//motorB.forward();
-			//motorA.stop(false);
-			//motorB.stop(false);
-			for (int z = 0; z < 200; z++) {
-				float[] angleRatePayload = rateAngleProvider.fetchSample();
-				angle = angleRatePayload[0];
-				rate = angleRatePayload[1];
-					//System.out.print(angle + " ");
-					System.out.println(rate);
-					angleInt = (int) (angle - 93);
-					//System.out.print(angleInt + " ");
-	
-
+			for (int z = 0; z < 1000; z++) {
+				// fetch a sample
+				anglePayload.fetchSample(sample, 0);
+				angle = sample[0];
+				System.out.println(angle);
+					angleInt = (int) (angle - 90);
+					angleAbs = Math.abs(angleInt);
+					
 					//squaring makes higer values increase rapidly for 
 					//dividing slows down motor speed
-					//motorA.setSpeed((int)Math.abs(rate * rate / 2));	
-					//motorB.setSpeed((int)Math.abs(rate * rate / 2));	
-					motorA.setSpeed((int)Math.abs(rate * (rate*.08) * 40));	
-					motorB.setSpeed((int)Math.abs(rate * (rate*.08) * 40));
+					//emMotorA.setPower(angleAbs * 100);
+					//emMotorB.setPower(* 100);
+					if(angleAbs > 20){
+						angleAbs = 20;
+					}
 					
+//					emMotorA.setPower((angleAbs / 20) * 100);
+//					emMotorB.setPower((angleAbs / 20) * 100);
+					//(100 - 50) / (100 - 50) * (angleAbs - 100 + 100
+					emMotorA.setPower(angleAbs + 50);
+					emMotorB.setPower(angleAbs + 50);
+
 					//scale down the higher degrees and increase the lower ones
+					//emMotorA.setSpeed((int)Math.abs(rate * rate / 2));	
+					//emMotorB.setSpeed((int)Math.abs(rate * rate / 2));	
+					//motorA.setSpeed((int)Math.abs(rate * (rate*.08) * 40));	
+					//motorB.setSpeed((int)Math.abs(rate * (rate*.08) * 40));
+					
 					if(angleInt < 0){
-						//this lets sqrt work with negative numbers
-						//reactionAngle = (int)(Math.sqrt(Math.abs(angleInt)) * 5);
-						reactionAngle = -angleInt;
-
-						//reactionAngle = -(angleInt * angleInt * angleInt);
-						//motorA.setSpeed((int)Math.abs(rate));
-						motorA.forward();
-						motorB.forward();
-						//motorB.setSpeed((int)Math.abs(rate));
-
+						//less than 90
+						emMotorA.forward();
+						emMotorB.forward();
 
 					} else {
-						motorA.backward();
-						motorB.backward();
-						//reactionAngle = -(int)(Math.sqrt(angleInt) * 5);
-						reactionAngle = -angleInt;
-						//reactionAngle = -(angleInt * angleInt * angleInt);
-						//motorA.setSpeed(100);		
-						//motorB.setSpeed(100);		
-
+						//greater than 90
+						emMotorA.backward();
+						emMotorB.backward();
 					}
-					//System.out.println(reactionAngle);
-					//any motor methods may interrupt rotate
-					reactionAngle = -angleInt;
-
-					
-					//motorA.rotate(reactionAngle, true);
-					//motorB.rotate(reactionAngle, true);
 			}
 
 		} catch (Exception e) {
 			e.printStackTrace();
 		} finally {
-			//rateProvider.close();
-			//angleProvider.close();
-			motorA.stop(false);
-			motorA.stop(false);
-			motorA.close();
-			motorB.close();
-			rateAngleProvider.close();
-			ev3 = null;
+
 		}
 		return false;
 

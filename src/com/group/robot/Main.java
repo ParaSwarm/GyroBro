@@ -9,9 +9,6 @@ public class Main {
 		try {
 			RobotTest robotTest = new RobotTest();
 			robotTest.sensorScan();
-		} catch (RemoteException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
 		} catch (Exception e){
 			e.printStackTrace();
 		}
