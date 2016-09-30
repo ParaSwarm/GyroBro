@@ -6,8 +6,8 @@ public class Main {
 
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
-		RobotTest robotTest = new RobotTest();
 		try {
+			RobotTest robotTest = new RobotTest();
 			robotTest.sensorScan();
 		} catch (RemoteException e) {
 			// TODO Auto-generated catch block
