@@ -1,27 +1,22 @@
 package com.group.robot;
 
-import java.io.IOException;
-import java.rmi.RemoteException;
-import java.rmi.RemoteException;
+
 import lejos.hardware.motor.UnregulatedMotor;
 import lejos.robotics.EncoderMotor;
 import lejos.robotics.SampleProvider;
+import lejos.hardware.Key;
+import lejos.hardware.KeyListener;
 
-import lejos.robotics.filter.MeanFilter;
-import lejos.hardware.BrickFinder;
-import lejos.hardware.BrickInfo;
+
+import lejos.hardware.Button;
 import lejos.hardware.Sound;
 import lejos.hardware.ev3.LocalEV3;
-import lejos.hardware.lcd.GraphicsLCD;
-import lejos.hardware.motor.Motor;
+
 import lejos.hardware.port.MotorPort;
 import lejos.hardware.port.Port;
 import lejos.hardware.sensor.EV3GyroSensor;
 import lejos.hardware.sensor.SensorModes;
-import lejos.remote.ev3.RMIRegulatedMotor;
-import lejos.remote.ev3.RMISampleProvider;
-import lejos.remote.ev3.RemoteEV3;
-import lejos.utility.Delay;
+
 
 public class RobotTest {
 
@@ -29,93 +24,180 @@ public class RobotTest {
 	SensorModes sensor;
 	SampleProvider anglePayload;
 	float[] sample;
-	
-	private int angleInt;
-	private int reactionAngle;
+
+	private static final float KP = 30f;
+	private static final float KI = 27.5f;
+	private static final float KD = 0;
 	private EncoderMotor emMotorA;
 	private EncoderMotor emMotorB;
 	private float angle;
-	private int angleAbs;
+	private int totalPower;
+	private float controllerOutput;
+	private float currentError;
+	private int diffError = 0;
+	private float P;
+	private float pPower;
+	private long currentTime;
+	private long lastTime;
+	private long deltaTime;
+	private float accumulatedError = 0;
+	private float iPower;
+	private long timeLimit;
+	private EV3GyroSensor ev3Gyro;
+	private float referenceAngle;
+	private static final float angleIncrement = 1f;
+
 	public RobotTest() {
+		buttonSetup();
 		setup();
+	}
+
+	private void buttonSetup() {
+		Button.ESCAPE.addKeyListener(new KeyListener() {
+			@Override
+			public void keyPressed(Key k) {
+			}
+
+			@Override
+			public void keyReleased(Key k) {
+				System.exit(1);
+			}
+		});
+		Button.LEFT.addKeyListener(new KeyListener() {
+			@Override
+			public void keyPressed(Key k) {
+			}
+
+			@Override
+			public void keyReleased(Key k) {
+				referenceAngle -= angleIncrement;
+				System.out.println("Balance point at: " + referenceAngle);
+			}
+		});
+		Button.RIGHT.addKeyListener(new KeyListener() {
+			@Override
+			public void keyPressed(Key k) {
+			}
+
+			@Override
+			public void keyReleased(Key k) {
+				referenceAngle += angleIncrement;
+				System.out.println("Balance point at: " + referenceAngle);
+			}
+		});	
 	}
 
 	private void setup() {
 		try {
-				emMotorA = new UnregulatedMotor(MotorPort.A);
-				emMotorB = new UnregulatedMotor(MotorPort.B);
 
-				// get a port instance
-				port = LocalEV3.get().getPort("S1");
-				// Get an instance of the Ultrasonic EV3 sensor
-				sensor = new EV3GyroSensor(port);
-				// get an instance of this sensor in measurement mode
-				anglePayload = sensor.getMode("Angle");
-				// initialise an array of floats for fetching samples
-				sample = new float[anglePayload.sampleSize()];
+			emMotorA = new UnregulatedMotor(MotorPort.A);
+			emMotorB = new UnregulatedMotor(MotorPort.B);
 
-				Sound.beep();
-
+			port = LocalEV3.get().getPort("S1");
+			ev3Gyro = new EV3GyroSensor(port);
+			ev3Gyro.reset();
+			sensor = ev3Gyro;
+			((EV3GyroSensor) sensor).reset();
+			anglePayload = sensor.getMode("Angle");
+			sample = new float[anglePayload.sampleSize()];
 
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-
 	}
 
-	/**
-	 * @return
-	 * @throws RemoteException
-	 */
-	public boolean sensorScan() {
+	public void sensorScan() {
 		try {
-			for (int z = 0; z < 1000; z++) {
+			/*
+			 * manually calibrate because of crappy reset function that's not
+			 * reliable: !!!If you remove this you will be surprised at how
+			 * inaccurate the gyro sensor is!!!
+			 */
+			Sound.beep();
+			System.out.println("Please balance robot and press enter at balance point");
+			Button.ENTER.waitForPressAndRelease();
+			anglePayload.fetchSample(sample, 0);
+			// set the target reference angle (in our world it's around 90
+			// degrees)
+			referenceAngle = sample[0];
+			// show the user how inconsistent the gyro angle is each time...the
+			// same angle can range 75->95
+			System.out.println("Balance point at: " + referenceAngle);
+			Sound.beep();
+
+			// initialize last time for integral part and length to run the
+			// program
+			lastTime = System.currentTimeMillis();
+			while (true) {
 				// fetch a sample
 				anglePayload.fetchSample(sample, 0);
 				angle = sample[0];
-				System.out.println(angle);
-					angleInt = (int) (angle - 90);
-					angleAbs = Math.abs(angleInt);
-					
-					//squaring makes higer values increase rapidly for 
-					//dividing slows down motor speed
-					//emMotorA.setPower(angleAbs * 100);
-					//emMotorB.setPower(* 100);
-					if(angleAbs > 20){
-						angleAbs = 20;
-					}
-					
-//					emMotorA.setPower((angleAbs / 20) * 100);
-//					emMotorB.setPower((angleAbs / 20) * 100);
-					//(100 - 50) / (100 - 50) * (angleAbs - 100 + 100
-					emMotorA.setPower(angleAbs + 50);
-					emMotorB.setPower(angleAbs + 50);
+				// power from pid output
+				totalPower = (int) crop100(PID(angle));
 
-					//scale down the higher degrees and increase the lower ones
-					//emMotorA.setSpeed((int)Math.abs(rate * rate / 2));	
-					//emMotorB.setSpeed((int)Math.abs(rate * rate / 2));	
-					//motorA.setSpeed((int)Math.abs(rate * (rate*.08) * 40));	
-					//motorB.setSpeed((int)Math.abs(rate * (rate*.08) * 40));
-					
-					if(angleInt < 0){
-						//less than 90
-						emMotorA.forward();
-						emMotorB.forward();
+				emMotorA.setPower(totalPower);
+				emMotorB.setPower(totalPower);
 
-					} else {
-						//greater than 90
-						emMotorA.backward();
-						emMotorB.backward();
-					}
+				// not literally forward, direction already established by PID
+				// with + or -
+				emMotorA.forward();
+				emMotorA.forward();
 			}
 
 		} catch (Exception e) {
 			e.printStackTrace();
-		} finally {
-
 		}
-		return false;
+	}
 
+	float PID(float angleInput) {
+		controllerOutput = 0;
+		// increasing angle makes robot lean back
+		// decreasing angle makes robot lean forward
+		currentError = (referenceAngle - angle);
+		controllerOutput += P(angleInput, currentError);
+		controllerOutput += I(angleInput, currentError);
+		controllerOutput += D(angleInput);
+		return controllerOutput;
+	}
+
+	float P(float angleInput, float currentErrorP) {
+		pPower = currentErrorP * KP;
+		// crop values over 100% because power range for motors is [-100, 100]
+		return crop100(pPower);
+	}
+
+	float I(float angleInput, float currentErrorI) {
+		//some annoying drift accumulates here after a while, causes the robot to lean back more and more
+		accumulatedError += currentErrorI * dt();
+		//current kludge to get minimize drift by occasionally pulling values down to zero
+		if(currentErrorI < 0.5 && accumulatedError < 0.5 ){
+			accumulatedError = 0;
+		}
+		iPower = accumulatedError * KI;
+		return crop100(iPower);
+	}
+
+	// returns 0 not implemented yet
+	float D(float angleInput) {
+		return diffError * KD;
+	}
+
+	float dt() {
+		currentTime = System.currentTimeMillis();
+		deltaTime = currentTime - lastTime;
+		lastTime = currentTime;
+		// convert to seconds
+		return deltaTime / 1000f;
+	}
+
+	// crop values over 100% because power range for motors is [-100, 100]
+	float crop100(float power) {
+		if (power > 100) {
+			power = 100;
+		} else if (power < -100) {
+			power = -100;
+		}
+		return power;
 	}
 
 }
